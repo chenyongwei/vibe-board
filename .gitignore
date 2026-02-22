@@ -2,21 +2,66 @@
 .DS_Store
 
 # Logs
+logs
 *.log
-
-# Node.js dependencies
-node_modules/
-
-# Build outputs
-agent/dist/
-agent/release/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
 
 # Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 agent/data/
 server/data/
 
+# Test coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Dependencies
+node_modules/
+jspm_packages/
+bower_components/
+
+# Build outputs
+build/
+dist/
+out/
+.next/
+.nuxt/
+.svelte-kit/
+.cache/
+.parcel-cache/
+.temp/
+agent/release/
+
+# Tooling cache
+.eslintcache
+.stylelintcache
+
 # Local environment files
 .env
+.env.*
+!.env.example
+
+# Optional package manager artifacts
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# TypeScript cache
+*.tsbuildinfo
 
 # Local runtime config
 agent/agent.config.json
