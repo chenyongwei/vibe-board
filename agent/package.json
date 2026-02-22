@@ -1,0 +1,20 @@
+{
+  "name": "vibe-agent-core",
+  "version": "0.1.0",
+  "description": "Local agent for vibe-task adapters discovery (OpenCode, Codex, ClaudeCode)",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "nodemon --watch . --ext ts --ignore dist --ignore node_modules --ignore data --signal SIGTERM --exec \"npm run build && exec node dist/index.js\"",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "package:agent": "npm run build && node scripts/package-agent.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "nodemon": "^3.1.10",
+    "pkg": "^5.8.1",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Vibe 任务看板</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="header">
+      <h1>Vibe 任务看板</h1>
+      <p>跨机器状态：进行中、待验收、已验证</p>
+    </div>
+    <div id="dashboard" class="grid"></div>
+    <div id="task-details" class="task-details"></div>
+    <div id="image-viewer" class="image-viewer" hidden>
+      <button type="button" class="image-viewer-backdrop js-image-viewer-close" aria-label="关闭图片预览"></button>
+      <div class="image-viewer-dialog" role="dialog" aria-modal="true" aria-label="图片预览">
+        <button type="button" class="image-viewer-close js-image-viewer-close" aria-label="关闭图片预览">×</button>
+        <img id="image-viewer-image" class="image-viewer-image" src="" alt="图片预览" />
+      </div>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

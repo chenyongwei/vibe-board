@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Node.js dependencies
+node_modules/
+
+# Build outputs
+agent/dist/
+agent/release/
+
+# Runtime data
+agent/data/
+server/data/
+
+# Local environment files
+.env
+
+# Local runtime config
+agent/agent.config.json

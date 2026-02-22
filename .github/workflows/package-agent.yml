@@ -1,0 +1,84 @@
+name: Package Agent
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'agent-v*'
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build cross-platform packages
+        run: npm run package:agent
+
+      - name: Create zip archives
+        run: |
+          python3 - <<'PY'
+          import os
+          import zipfile
+
+          release_dir = os.path.join('release')
+          for name in sorted(os.listdir(release_dir)):
+            folder = os.path.join(release_dir, name)
+            if not os.path.isdir(folder):
+              continue
+            archive = os.path.join(release_dir, f'vibe-agent-{name}.zip')
+            with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+              for root, _, files in os.walk(folder):
+                for file_name in files:
+                  full = os.path.join(root, file_name)
+                  rel = os.path.relpath(full, folder)
+                  zf.write(full, rel)
+          PY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibe-agent-release
+          path: |
+            agent/release/vibe-agent-*.zip
+            agent/release/README.txt
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: vibe-agent-release
+          path: release-assets
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/vibe-agent-*.zip
+            release-assets/README.txt

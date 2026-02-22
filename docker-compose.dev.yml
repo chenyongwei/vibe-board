@@ -1,0 +1,26 @@
+services:
+  api:
+    build: null
+    image: node:22-alpine
+    working_dir: /app
+    environment:
+      NODE_ENV: development
+    command: >
+      sh -c '
+      if [ ! -d node_modules ] || [ -z "$(ls -A node_modules 2>/dev/null)" ]; then
+        npm ci;
+      fi;
+      npm run dev:api
+      '
+    volumes:
+      - ./server:/app
+      - api_node_modules:/app/node_modules
+  ui:
+    build: null
+    image: nginx:1.27-alpine
+    volumes:
+      - ./server/dashboard/public:/usr/share/nginx/html:ro
+      - ./docker/ui.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  api_node_modules:
