@@ -45,6 +45,7 @@ export class CodexAdapter implements Adapter {
   private activeWindowMinutes = parsePositiveInt(process.env.CODEX_ACTIVE_WINDOW_MINUTES, 30);
   private maxTasks = parsePositiveInt(process.env.CODEX_MAX_SESSIONS, 50);
   private requireProcessRunning = String(process.env.CODEX_REQUIRE_RUNNING || '1') !== '0';
+  private limitToActiveWorkspace = parseBooleanFlag(process.env.CODEX_LIMIT_TO_ACTIVE_WORKSPACE, false);
 
   async discover(): Promise<AdapterInfo> {
     let online = false;
@@ -89,7 +90,7 @@ export class CodexAdapter implements Adapter {
       archivedSessionsRoot: this.archivedSessionsRoot,
       maxTasks: this.maxTasks,
       threadTitles: globalState.threadTitles,
-      activeWorkspaceRoots: globalState.activeWorkspaceRoots,
+      activeWorkspaceRoots: this.limitToActiveWorkspace ? globalState.activeWorkspaceRoots : [],
     });
     return rows.map((r) => this.normalizeTask(r));
   }
@@ -156,6 +157,14 @@ function inferStatus(raw: any, activeWindowMinutes: number): string {
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = parseInt(String(value || ''), 10);
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return fallback;
+}
+
+function parseBooleanFlag(value: string | undefined, fallback: boolean): boolean {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') return true;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
   return fallback;
 }
 

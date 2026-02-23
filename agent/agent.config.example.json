@@ -10,7 +10,7 @@
     "env": "适配器附加环境变量，等价于系统环境变量设置。"
   },
   "report_endpoint": "http://127.0.0.1:61100/api/report",
-  "report_interval_seconds": 15,
+  "report_interval_seconds": 3,
   "machine_id": "",
   "machine_name": "",
   "machine_fingerprint": "",
@@ -20,6 +20,7 @@
     "CODEX_ARCHIVED_SESSIONS_DIR": "",
     "CODEX_ACTIVE_WINDOW_MINUTES": 30,
     "CODEX_MAX_SESSIONS": 50,
+    "CODEX_LIMIT_TO_ACTIVE_WORKSPACE": 0,
     "CLAUDE_CODE_CLI_PATH": "",
     "CLAUDE_CODE_SESSIONS_DIR": "",
     "CLAUDE_CODE_ACTIVE_WINDOW_MINUTES": 30,

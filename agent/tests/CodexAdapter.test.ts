@@ -404,7 +404,7 @@ test('CodexAdapter prefers Codex desktop thread title mapping and falls back to 
   }
 });
 
-test('CodexAdapter scopes sessions to active workspace roots when available', async () => {
+test('CodexAdapter can scope sessions to active workspace roots when enabled', async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'vibe-codex-workspace-filter-'));
   const sessionsRoot = path.join(tmp, 'sessions');
   const archivedRoot = path.join(tmp, 'archived_sessions');
@@ -449,6 +449,7 @@ test('CodexAdapter scopes sessions to active workspace roots when available', as
     CODEX_ARCHIVED_SESSIONS_DIR: process.env.CODEX_ARCHIVED_SESSIONS_DIR,
     CODEX_MAX_SESSIONS: process.env.CODEX_MAX_SESSIONS,
     CODEX_REQUIRE_RUNNING: process.env.CODEX_REQUIRE_RUNNING,
+    CODEX_LIMIT_TO_ACTIVE_WORKSPACE: process.env.CODEX_LIMIT_TO_ACTIVE_WORKSPACE,
   };
 
   process.env.CODEX_HOME = tmp;
@@ -456,6 +457,7 @@ test('CodexAdapter scopes sessions to active workspace roots when available', as
   process.env.CODEX_ARCHIVED_SESSIONS_DIR = archivedRoot;
   process.env.CODEX_MAX_SESSIONS = '10';
   process.env.CODEX_REQUIRE_RUNNING = '0';
+  process.env.CODEX_LIMIT_TO_ACTIVE_WORKSPACE = '1';
 
   try {
     const adapter = new CodexAdapter();
@@ -468,6 +470,7 @@ test('CodexAdapter scopes sessions to active workspace roots when available', as
     process.env.CODEX_ARCHIVED_SESSIONS_DIR = restore.CODEX_ARCHIVED_SESSIONS_DIR;
     process.env.CODEX_MAX_SESSIONS = restore.CODEX_MAX_SESSIONS;
     process.env.CODEX_REQUIRE_RUNNING = restore.CODEX_REQUIRE_RUNNING;
+    process.env.CODEX_LIMIT_TO_ACTIVE_WORKSPACE = restore.CODEX_LIMIT_TO_ACTIVE_WORKSPACE;
     rmSync(tmp, { recursive: true, force: true });
   }
 });
