@@ -64,6 +64,7 @@ test('OpenCodeAdapter reads local storage sessions without CLI and maps vibe sta
     OPENCODE_STORAGE_DIR: process.env.OPENCODE_STORAGE_DIR,
     OPENCODE_ACTIVE_WINDOW_MINUTES: process.env.OPENCODE_ACTIVE_WINDOW_MINUTES,
     OPENCODE_MAX_SESSIONS: process.env.OPENCODE_MAX_SESSIONS,
+    OPENCODE_REQUIRE_RUNNING: process.env.OPENCODE_REQUIRE_RUNNING,
     PATH: process.env.PATH,
   };
 
@@ -71,6 +72,7 @@ test('OpenCodeAdapter reads local storage sessions without CLI and maps vibe sta
   process.env.OPENCODE_STORAGE_DIR = storageRoot;
   process.env.OPENCODE_ACTIVE_WINDOW_MINUTES = '30';
   process.env.OPENCODE_MAX_SESSIONS = '10';
+  process.env.OPENCODE_REQUIRE_RUNNING = '0';
   process.env.PATH = '/usr/bin:/bin';
 
   const now = new Date('2026-02-22T15:00:00.000Z');
@@ -109,6 +111,7 @@ test('OpenCodeAdapter reads local storage sessions without CLI and maps vibe sta
     process.env.OPENCODE_STORAGE_DIR = restore.OPENCODE_STORAGE_DIR;
     process.env.OPENCODE_ACTIVE_WINDOW_MINUTES = restore.OPENCODE_ACTIVE_WINDOW_MINUTES;
     process.env.OPENCODE_MAX_SESSIONS = restore.OPENCODE_MAX_SESSIONS;
+    process.env.OPENCODE_REQUIRE_RUNNING = restore.OPENCODE_REQUIRE_RUNNING;
     process.env.PATH = restore.PATH;
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -204,12 +207,14 @@ test('ClaudeCodeAdapter reads local jsonl sessions without CLI and maps vibe sta
     CLAUDE_CODE_SESSIONS_DIR: process.env.CLAUDE_CODE_SESSIONS_DIR,
     CLAUDE_CODE_ACTIVE_WINDOW_MINUTES: process.env.CLAUDE_CODE_ACTIVE_WINDOW_MINUTES,
     CLAUDE_CODE_MAX_SESSIONS: process.env.CLAUDE_CODE_MAX_SESSIONS,
+    CLAUDE_CODE_REQUIRE_RUNNING: process.env.CLAUDE_CODE_REQUIRE_RUNNING,
   };
 
   process.env.CLAUDE_CODE_CLI_PATH = path.join(tmp, 'missing-claude-code-bin');
   process.env.CLAUDE_CODE_SESSIONS_DIR = sessionsRoot;
   process.env.CLAUDE_CODE_ACTIVE_WINDOW_MINUTES = '30';
   process.env.CLAUDE_CODE_MAX_SESSIONS = '10';
+  process.env.CLAUDE_CODE_REQUIRE_RUNNING = '0';
 
   const now = new Date('2026-02-22T15:00:00.000Z');
   const realNow = Date.now;
@@ -243,6 +248,7 @@ test('ClaudeCodeAdapter reads local jsonl sessions without CLI and maps vibe sta
     process.env.CLAUDE_CODE_SESSIONS_DIR = restore.CLAUDE_CODE_SESSIONS_DIR;
     process.env.CLAUDE_CODE_ACTIVE_WINDOW_MINUTES = restore.CLAUDE_CODE_ACTIVE_WINDOW_MINUTES;
     process.env.CLAUDE_CODE_MAX_SESSIONS = restore.CLAUDE_CODE_MAX_SESSIONS;
+    process.env.CLAUDE_CODE_REQUIRE_RUNNING = restore.CLAUDE_CODE_REQUIRE_RUNNING;
     rmSync(tmp, { recursive: true, force: true });
   }
 });

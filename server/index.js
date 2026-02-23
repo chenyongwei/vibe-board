@@ -12,11 +12,11 @@ const HISTORY_LIMIT = Number(process.env.HISTORY_LIMIT || 5000);
 const PREVIEW_IMAGE_LIMIT = Number(process.env.PREVIEW_IMAGE_LIMIT || 3);
 const PREVIEW_IMAGE_MAX_LENGTH = Number(process.env.PREVIEW_IMAGE_MAX_LENGTH || (2 * 1024 * 1024));
 const DASHBOARD_STREAM_HEARTBEAT_MS = Number(process.env.DASHBOARD_STREAM_HEARTBEAT_MS || 25000);
-const AGENT_OFFLINE_TIMEOUT_SECONDS = Number(process.env.AGENT_OFFLINE_TIMEOUT_SECONDS || 45);
+const AGENT_OFFLINE_TIMEOUT_SECONDS = Number(process.env.AGENT_OFFLINE_TIMEOUT_SECONDS || 20);
 const AGENT_OFFLINE_TIMEOUT_MS =
   (Number.isFinite(AGENT_OFFLINE_TIMEOUT_SECONDS) && AGENT_OFFLINE_TIMEOUT_SECONDS > 0
     ? AGENT_OFFLINE_TIMEOUT_SECONDS
-    : 45) * 1000;
+    : 20) * 1000;
 const dashboardStreamClients = new Set();
 let dashboardStreamEventId = 0;
 
@@ -198,6 +198,34 @@ function normalizeSourceToken(value) {
     .replace(/^-+|-+$/g, '');
 }
 
+function parseSourceTokenFromMachineId(machineId) {
+  const raw = String(machineId || '').trim();
+  if (!raw) return '';
+  const parts = raw.split('::');
+  if (parts.length < 2) return '';
+  return normalizeSourceToken(parts[1]);
+}
+
+function parseSourceTokenFromAgentName(agentName) {
+  const raw = normalizeAgentName(agentName);
+  if (!raw) return '';
+  const separators = [' · ', ' / ', ' - '];
+  for (const sep of separators) {
+    const idx = raw.lastIndexOf(sep);
+    if (idx < 0) continue;
+    const suffix = raw.slice(idx + sep.length).trim();
+    const token = normalizeSourceToken(suffix);
+    if (token) return token;
+  }
+  return '';
+}
+
+function resolveMachineSourceToken(machine) {
+  const fromId = parseSourceTokenFromMachineId(machine?.id);
+  if (fromId) return fromId;
+  return parseSourceTokenFromAgentName(machine?.name);
+}
+
 function composeMachineAgentName(machineName, source) {
   const base = normalizeAgentName(machineName);
   const normalizedSource = normalizeTaskSource(source);
@@ -270,24 +298,62 @@ function resolveMachinePresence(machine, nowMs = Date.now()) {
   };
 }
 
+function toSafeNonNegativeNumber(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return n >= 0 ? n : 0;
+}
+
+function compareTimestampDesc(aValue, bValue) {
+  const aMs = Date.parse(aValue || '');
+  const bMs = Date.parse(bValue || '');
+  const aValid = !Number.isNaN(aMs);
+  const bValid = !Number.isNaN(bMs);
+
+  if (aValid && bValid && aMs !== bMs) {
+    return bMs - aMs;
+  }
+  if (aValid !== bValid) {
+    return aValid ? -1 : 1;
+  }
+  return 0;
+}
+
 function compareDashboardMachines(a, b) {
-  const statusRank = (item) => (item.agent_status === 'online' ? 0 : 1);
-  const aRank = statusRank(a);
-  const bRank = statusRank(b);
-  if (aRank !== bRank) return aRank - bRank;
-
-  const aSinceMs = Date.parse(a.status_since || '');
-  const bSinceMs = Date.parse(b.status_since || '');
-  if (!Number.isNaN(aSinceMs) && !Number.isNaN(bSinceMs) && aSinceMs !== bSinceMs) {
-    return bSinceMs - aSinceMs;
+  const aOffline = a.agent_status === 'offline';
+  const bOffline = b.agent_status === 'offline';
+  if (aOffline !== bOffline) {
+    return aOffline ? 1 : -1;
   }
 
-  const aSeenMs = Date.parse(a.last_seen || '');
-  const bSeenMs = Date.parse(b.last_seen || '');
-  if (!Number.isNaN(aSeenMs) && !Number.isNaN(bSeenMs) && aSeenMs !== bSeenMs) {
-    return bSeenMs - aSeenMs;
+  if (!aOffline) {
+    const aInProgress = toSafeNonNegativeNumber(a?.counts?.in_progress);
+    const bInProgress = toSafeNonNegativeNumber(b?.counts?.in_progress);
+    if (aInProgress !== bInProgress) {
+      return bInProgress - aInProgress;
+    }
+
+    const statusSinceDiff = compareTimestampDesc(
+      a.status_since || a.online_since || a.last_seen || '',
+      b.status_since || b.online_since || b.last_seen || ''
+    );
+    if (statusSinceDiff !== 0) {
+      return statusSinceDiff;
+    }
+  } else {
+    const offlineSinceDiff = compareTimestampDesc(
+      a.offline_since || a.status_since || a.last_seen || '',
+      b.offline_since || b.status_since || b.last_seen || ''
+    );
+    if (offlineSinceDiff !== 0) {
+      return offlineSinceDiff;
+    }
   }
 
+  const lastSeenDiff = compareTimestampDesc(a.last_seen || '', b.last_seen || '');
+  if (lastSeenDiff !== 0) {
+    return lastSeenDiff;
+  }
   return String(a.display_title || '').localeCompare(String(b.display_title || ''), 'zh-CN');
 }
 
@@ -375,10 +441,40 @@ function appendHistory(db, event) {
   }
 }
 
-function findMachine(db, machineId, machineFingerprint, machineName) {
+function pickMostRecentMachine(candidates) {
+  if (!Array.isArray(candidates) || candidates.length === 0) return null;
+  return [...candidates].sort((a, b) => {
+    const aSeen = Date.parse(a?.last_seen || '');
+    const bSeen = Date.parse(b?.last_seen || '');
+    const aValid = !Number.isNaN(aSeen);
+    const bValid = !Number.isNaN(bSeen);
+    if (aValid && bValid && aSeen !== bSeen) return bSeen - aSeen;
+    if (aValid !== bValid) return aValid ? -1 : 1;
+    return String(a?.id || '').localeCompare(String(b?.id || ''));
+  })[0];
+}
+
+function findMachine(db, machineId, machineFingerprint, machineName, sourceToken = '') {
+  const machines = Array.isArray(db?.machines) ? db.machines : [];
   const fingerprint = normalizeMachineFingerprint(machineFingerprint, machineId);
   const agentName = normalizeAgentName(machineName, machineId);
-  return db.machines.find((m) => {
+  const normalizedSourceToken = normalizeSourceToken(sourceToken);
+  if (normalizedSourceToken) {
+    const sourceMatches = machines.filter((m) => {
+      if (!m || !m.id) return false;
+      const fp = normalizeMachineFingerprint(m.fingerprint, m.id);
+      if (fp !== fingerprint) return false;
+      return resolveMachineSourceToken(m) === normalizedSourceToken;
+    });
+    if (sourceMatches.length > 0) {
+      const aliasMatch = sourceMatches.find(
+        (m) => m.id === machineId || (Array.isArray(m.aliases) && m.aliases.includes(machineId))
+      );
+      if (aliasMatch) return aliasMatch;
+      return pickMostRecentMachine(sourceMatches);
+    }
+  }
+  return machines.find((m) => {
     if (!m || !m.id) return false;
     const fp = normalizeMachineFingerprint(m.fingerprint, m.id);
     const existingAgentName = normalizeAgentName(m.name, m.id);
@@ -394,13 +490,15 @@ function findMachine(db, machineId, machineFingerprint, machineName) {
 function mergeMachineRecords(db, canonicalMachine) {
   const canonicalFingerprint = normalizeMachineFingerprint(canonicalMachine.fingerprint, canonicalMachine.id);
   const canonicalAgentName = normalizeAgentName(canonicalMachine.name, canonicalMachine.id);
+  const canonicalSourceToken = resolveMachineSourceToken(canonicalMachine);
   const duplicates = db.machines.filter((m) => {
     if (!m || !m.id) return false;
     if (m.id === canonicalMachine.id) return false;
-    return (
-      normalizeMachineFingerprint(m.fingerprint, m.id) === canonicalFingerprint &&
-      normalizeAgentName(m.name, m.id) === canonicalAgentName
-    );
+    if (normalizeMachineFingerprint(m.fingerprint, m.id) !== canonicalFingerprint) return false;
+    if (canonicalSourceToken) {
+      return resolveMachineSourceToken(m) === canonicalSourceToken;
+    }
+    return normalizeAgentName(m.name, m.id) === canonicalAgentName;
   });
   if (duplicates.length === 0) return;
 
@@ -442,10 +540,18 @@ function mergeMachineRecords(db, canonicalMachine) {
   db.tasks = dedupeStoredTasks(db.tasks || []);
 }
 
-function buildCounts(tasks) {
+function resolveEffectiveTaskStatus(task, presence) {
+  const normalized = normalizeTaskStatus(task?.status);
+  if (presence?.agent_status === 'offline' && normalized === 'in_progress') {
+    return 'awaiting_verification';
+  }
+  return normalized;
+}
+
+function buildCounts(tasks, presence) {
   return tasks.reduce(
     (acc, task) => {
-      const status = normalizeTaskStatus(task.status);
+      const status = resolveEffectiveTaskStatus(task, presence);
       if (status === 'in_progress') acc.in_progress += 1;
       if (status === 'awaiting_verification') acc.awaiting_verification += 1;
       if (status === 'verified') acc.verified += 1;
@@ -561,7 +667,7 @@ app.post('/api/report', asyncRoute(async (req, res) => {
     const sourceMachineName = composeMachineAgentName(machineName, groupSource);
 
     // Upsert machine card scoped by source.
-    let machine = findMachine(db, sourceMachineId, machineFingerprint, sourceMachineName);
+    let machine = findMachine(db, sourceMachineId, machineFingerprint, sourceMachineName, sourceToken);
     if (!machine) {
       const recordId = pickMachineRecordId(db, sourceMachineId, machineFingerprint, sourceMachineName);
       machine = {
@@ -705,8 +811,8 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
   const data = machines.map(m => {
     const ms = m.id;
     const mTasks = tasks.filter(t => t.machine_id === ms);
-    const counts = buildCounts(mTasks);
     const presence = resolveMachinePresence(m, nowMs);
+    const counts = buildCounts(mTasks, presence);
     return {
       id: m.id,
       name: m.name,
@@ -730,9 +836,17 @@ app.get('/api/dashboard/machine/:id', asyncRoute(async (req, res) => {
   const db = await loadDB();
   const machine = db.machines.find(m => m.id === machineId);
   if (!machine) return res.status(404).json({ ok: false, error: 'machine not found' });
-  const tasks = (db.tasks || []).filter(t => t.machine_id === machineId);
-  const counts = buildCounts(tasks);
   const presence = resolveMachinePresence(machine, Date.now());
+  const tasks = (db.tasks || [])
+    .filter(t => t.machine_id === machineId)
+    .map((task) => {
+      const effectiveStatus = resolveEffectiveTaskStatus(task, presence);
+      if (effectiveStatus === normalizeTaskStatus(task.status)) {
+        return task;
+      }
+      return { ...task, status: effectiveStatus, raw_status: task.status };
+    });
+  const counts = buildCounts(tasks);
   const recent_history = (db.history || [])
     .filter(h => h.machine_id === machineId)
     .slice(-20)

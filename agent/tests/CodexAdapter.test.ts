@@ -97,6 +97,7 @@ test('CodexAdapter reads local sessions and maps vibe statuses', async () => {
     CODEX_ARCHIVED_SESSIONS_DIR: process.env.CODEX_ARCHIVED_SESSIONS_DIR,
     CODEX_ACTIVE_WINDOW_MINUTES: process.env.CODEX_ACTIVE_WINDOW_MINUTES,
     CODEX_MAX_SESSIONS: process.env.CODEX_MAX_SESSIONS,
+    CODEX_REQUIRE_RUNNING: process.env.CODEX_REQUIRE_RUNNING,
   };
 
   process.env.CODEX_HOME = tmp;
@@ -104,6 +105,7 @@ test('CodexAdapter reads local sessions and maps vibe statuses', async () => {
   process.env.CODEX_ARCHIVED_SESSIONS_DIR = archivedRoot;
   process.env.CODEX_ACTIVE_WINDOW_MINUTES = '30';
   process.env.CODEX_MAX_SESSIONS = '10';
+  process.env.CODEX_REQUIRE_RUNNING = '0';
 
   const realNow = Date.now;
   Date.now = () => now.getTime();
@@ -141,6 +143,7 @@ test('CodexAdapter reads local sessions and maps vibe statuses', async () => {
     process.env.CODEX_ARCHIVED_SESSIONS_DIR = restore.CODEX_ARCHIVED_SESSIONS_DIR;
     process.env.CODEX_ACTIVE_WINDOW_MINUTES = restore.CODEX_ACTIVE_WINDOW_MINUTES;
     process.env.CODEX_MAX_SESSIONS = restore.CODEX_MAX_SESSIONS;
+    process.env.CODEX_REQUIRE_RUNNING = restore.CODEX_REQUIRE_RUNNING;
     rmSync(tmp, { recursive: true, force: true });
   }
 });
@@ -190,6 +193,7 @@ test('CodexAdapter strips <image> placeholders and exposes preview images', asyn
     CODEX_ARCHIVED_SESSIONS_DIR: process.env.CODEX_ARCHIVED_SESSIONS_DIR,
     CODEX_ACTIVE_WINDOW_MINUTES: process.env.CODEX_ACTIVE_WINDOW_MINUTES,
     CODEX_MAX_SESSIONS: process.env.CODEX_MAX_SESSIONS,
+    CODEX_REQUIRE_RUNNING: process.env.CODEX_REQUIRE_RUNNING,
   };
 
   process.env.CODEX_HOME = tmp;
@@ -197,6 +201,7 @@ test('CodexAdapter strips <image> placeholders and exposes preview images', asyn
   process.env.CODEX_ARCHIVED_SESSIONS_DIR = archivedRoot;
   process.env.CODEX_ACTIVE_WINDOW_MINUTES = '30';
   process.env.CODEX_MAX_SESSIONS = '10';
+  process.env.CODEX_REQUIRE_RUNNING = '0';
 
   try {
     const adapter = new CodexAdapter();
@@ -210,6 +215,7 @@ test('CodexAdapter strips <image> placeholders and exposes preview images', asyn
     process.env.CODEX_ARCHIVED_SESSIONS_DIR = restore.CODEX_ARCHIVED_SESSIONS_DIR;
     process.env.CODEX_ACTIVE_WINDOW_MINUTES = restore.CODEX_ACTIVE_WINDOW_MINUTES;
     process.env.CODEX_MAX_SESSIONS = restore.CODEX_MAX_SESSIONS;
+    process.env.CODEX_REQUIRE_RUNNING = restore.CODEX_REQUIRE_RUNNING;
     rmSync(tmp, { recursive: true, force: true });
   }
 });
@@ -271,12 +277,14 @@ test('CodexAdapter prefers Codex desktop thread title mapping and falls back to 
     CODEX_SESSIONS_DIR: process.env.CODEX_SESSIONS_DIR,
     CODEX_ARCHIVED_SESSIONS_DIR: process.env.CODEX_ARCHIVED_SESSIONS_DIR,
     CODEX_MAX_SESSIONS: process.env.CODEX_MAX_SESSIONS,
+    CODEX_REQUIRE_RUNNING: process.env.CODEX_REQUIRE_RUNNING,
   };
 
   process.env.CODEX_HOME = tmp;
   process.env.CODEX_SESSIONS_DIR = sessionsRoot;
   process.env.CODEX_ARCHIVED_SESSIONS_DIR = archivedRoot;
   process.env.CODEX_MAX_SESSIONS = '10';
+  process.env.CODEX_REQUIRE_RUNNING = '0';
 
   try {
     const adapter = new CodexAdapter();
@@ -292,6 +300,7 @@ test('CodexAdapter prefers Codex desktop thread title mapping and falls back to 
     process.env.CODEX_SESSIONS_DIR = restore.CODEX_SESSIONS_DIR;
     process.env.CODEX_ARCHIVED_SESSIONS_DIR = restore.CODEX_ARCHIVED_SESSIONS_DIR;
     process.env.CODEX_MAX_SESSIONS = restore.CODEX_MAX_SESSIONS;
+    process.env.CODEX_REQUIRE_RUNNING = restore.CODEX_REQUIRE_RUNNING;
     rmSync(tmp, { recursive: true, force: true });
   }
 });

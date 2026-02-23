@@ -1,6 +1,6 @@
 import { Adapter } from './Adapter';
 import { AdapterInfo, Task } from '../types';
-import { runCommand, fileExistsSync } from '../utils';
+import { runCommand, fileExistsSync, isAnyProcessRunning } from '../utils';
 import { readFileSync, readdirSync, statSync } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -28,6 +28,7 @@ export class OpenCodeAdapter implements Adapter {
   private storageRoot = process.env.OPENCODE_STORAGE_DIR || path.join(os.homedir(), '.local', 'share', 'opencode', 'storage');
   private activeWindowMinutes = parsePositiveInt(process.env.OPENCODE_ACTIVE_WINDOW_MINUTES, 30);
   private maxSessions = parsePositiveInt(process.env.OPENCODE_MAX_SESSIONS, 50);
+  private requireProcessRunning = String(process.env.OPENCODE_REQUIRE_RUNNING || '1') !== '0';
 
   async discover(): Promise<AdapterInfo> {
     let online = false;
@@ -45,6 +46,9 @@ export class OpenCodeAdapter implements Adapter {
 
     const hasSessions = hasOpenCodeSessionStorage(this.storageRoot);
     online = !!version || hasSessions;
+    if (this.requireProcessRunning) {
+      online = await this.isRuntimeRunning();
+    }
 
     return {
       id: 'opencode',
@@ -59,6 +63,11 @@ export class OpenCodeAdapter implements Adapter {
   }
 
   async getTasks(): Promise<Task[]> {
+    if (this.requireProcessRunning) {
+      const runtimeActive = await this.isRuntimeRunning();
+      if (!runtimeActive) return [];
+    }
+
     const records = await this.collectSessions();
     return records.map((item) => this.normalizeTask(item));
   }
@@ -115,6 +124,11 @@ export class OpenCodeAdapter implements Adapter {
     } catch {
       // leave path untouched
     }
+  }
+
+  private async isRuntimeRunning(): Promise<boolean> {
+    const processTokens = ['opencode', path.basename(this.path || 'opencode')];
+    return isAnyProcessRunning(processTokens);
   }
 }
 

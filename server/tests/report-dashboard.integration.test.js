@@ -683,7 +683,80 @@ test('same machine should split cards by task source', async (t) => {
   assert.ok(dashboard.machines.every((item) => item.total_tasks === 1));
 });
 
-test('dashboard marks stale agents offline, returns status times, and sorts offline cards last', async (t) => {
+test('same fingerprint/source keeps a single card when machine_name casing changes', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vibe-dashboard-source-identity-test-'));
+  const dbPath = path.join(tempDir, 'db.json');
+  const port = await getFreePort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  let logs = '';
+  const server = spawn(process.execPath, ['index.js'], {
+    cwd: path.resolve(__dirname, '..'),
+    env: {
+      ...process.env,
+      PORT: String(port),
+      DB_PATH: dbPath,
+      STORAGE_BACKEND: 'file',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  server.stdout.on('data', (chunk) => { logs += chunk.toString(); });
+  server.stderr.on('data', (chunk) => { logs += chunk.toString(); });
+
+  t.after(() => {
+    if (!server.killed) {
+      server.kill('SIGTERM');
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  await waitForServer(baseUrl);
+
+  const reportMachine = async (payload) => {
+    const resp = await fetch(`${baseUrl}/api/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    assert.equal(resp.status, 200, logs);
+  };
+
+  await reportMachine({
+    machine_id: 'm-case',
+    machine_name: 'Macbook Air M4',
+    machine_fingerprint: 'fp-source-identity-01',
+    tasks: [{ id: 'c1', title: 'Codex Task', status: 'in_progress', source: 'Codex' }],
+  });
+
+  await reportMachine({
+    machine_id: 'm-case',
+    machine_name: 'MacBook Air M4',
+    machine_fingerprint: 'fp-source-identity-01',
+    tasks: [{ id: 'c1', title: 'Codex Task', status: 'awaiting_verification', source: 'Codex' }],
+  });
+
+  const dashboardResp = await fetch(`${baseUrl}/api/dashboard`);
+  assert.equal(dashboardResp.status, 200, logs);
+  const dashboard = await dashboardResp.json();
+  const codexCards = dashboard.machines.filter((item) => item.agent_name.toLowerCase().includes('codex'));
+  assert.equal(codexCards.length, 1);
+  assert.equal(codexCards[0]?.id, 'm-case::codex');
+  assert.deepEqual(codexCards[0]?.counts, {
+    in_progress: 0,
+    awaiting_verification: 1,
+    verified: 0,
+  });
+  assert.equal(codexCards[0]?.total_tasks, 1);
+
+  const detailResp = await fetch(`${baseUrl}/api/dashboard/machine/${encodeURIComponent(codexCards[0].id)}`);
+  assert.equal(detailResp.status, 200, logs);
+  const detail = await detailResp.json();
+  assert.equal(detail.tasks.length, 1);
+  assert.equal(detail.tasks[0]?.id, 'c1');
+  assert.equal(detail.tasks[0]?.status, 'awaiting_verification');
+});
+
+test('dashboard sorts by in-progress count, keeps offline cards last, and orders offline by offline_since', async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vibe-dashboard-agent-status-test-'));
   const dbPath = path.join(tempDir, 'db.json');
   const port = await getFreePort();
@@ -713,53 +786,101 @@ test('dashboard marks stale agents offline, returns status times, and sorts offl
 
   await waitForServer(baseUrl);
 
-  const firstResp = await fetch(`${baseUrl}/api/report`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      machine_id: 'm-old',
-      machine_name: 'Old Agent',
-      machine_fingerprint: 'fp-agent-status',
-      tasks: [{ id: 'old-task', title: 'Old Task', status: 'in_progress' }],
-    }),
+  const reportMachine = async (payload) => {
+    const resp = await fetch(`${baseUrl}/api/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    assert.equal(resp.status, 200, logs);
+    return resp.json();
+  };
+
+  await reportMachine({
+    machine_id: 'm-offline-old',
+    machine_name: 'Offline Old',
+    machine_fingerprint: 'fp-agent-status-old',
+    tasks: [{ id: 'old-task', title: 'Old Task', status: 'in_progress' }],
   });
-  assert.equal(firstResp.status, 200, logs);
 
   await sleep(1200);
 
-  const secondResp = await fetch(`${baseUrl}/api/report`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      machine_id: 'm-new',
-      machine_name: 'New Agent',
-      machine_fingerprint: 'fp-agent-status-2',
-      tasks: [{ id: 'new-task', title: 'New Task', status: 'verified' }],
-    }),
+  await reportMachine({
+    machine_id: 'm-offline-new',
+    machine_name: 'Offline New',
+    machine_fingerprint: 'fp-agent-status-new',
+    tasks: [{ id: 'new-task', title: 'New Task', status: 'in_progress' }],
   });
-  assert.equal(secondResp.status, 200, logs);
+
+  await sleep(1200);
+
+  await reportMachine({
+    machine_id: 'm-online-high',
+    machine_name: 'Online High',
+    machine_fingerprint: 'fp-agent-status-online-high',
+    tasks: [
+      { id: 'high-1', title: 'High 1', status: 'in_progress' },
+      { id: 'high-2', title: 'High 2', status: 'in_progress' },
+      { id: 'high-3', title: 'High 3', status: 'in_progress' },
+    ],
+  });
+
+  await sleep(80);
+
+  await reportMachine({
+    machine_id: 'm-online-low',
+    machine_name: 'Online Low',
+    machine_fingerprint: 'fp-agent-status-online-low',
+    tasks: [{ id: 'low-1', title: 'Low 1', status: 'in_progress' }],
+  });
 
   const dashboardResp = await fetch(`${baseUrl}/api/dashboard`);
   assert.equal(dashboardResp.status, 200, logs);
   const dashboard = await dashboardResp.json();
-  assert.equal(dashboard.machines.length, 2);
+  assert.equal(dashboard.machines.length, 4);
+  assert.deepEqual(
+    dashboard.machines.map((item) => item.id),
+    ['m-online-high', 'm-online-low', 'm-offline-new', 'm-offline-old']
+  );
 
-  const firstCard = dashboard.machines[0];
-  const secondCard = dashboard.machines[1];
-  assert.equal(firstCard.id, 'm-new');
-  assert.equal(firstCard.agent_status, 'online');
-  assert.ok(firstCard.online_since);
-  assert.equal(firstCard.offline_since, null);
+  const onlineHighCard = dashboard.machines[0];
+  const onlineLowCard = dashboard.machines[1];
+  const offlineNewCard = dashboard.machines[2];
+  const offlineOldCard = dashboard.machines[3];
 
-  assert.equal(secondCard.id, 'm-old');
-  assert.equal(secondCard.agent_status, 'offline');
-  assert.ok(secondCard.offline_since);
-  assert.ok(Date.parse(secondCard.offline_since) >= Date.parse(secondCard.last_seen));
+  assert.equal(onlineHighCard.agent_status, 'online');
+  assert.equal(onlineHighCard.counts.in_progress, 3);
+  assert.ok(onlineHighCard.online_since);
+  assert.equal(onlineHighCard.offline_since, null);
 
-  const detailResp = await fetch(`${baseUrl}/api/dashboard/machine/m-old`);
+  assert.equal(onlineLowCard.agent_status, 'online');
+  assert.equal(onlineLowCard.counts.in_progress, 1);
+
+  assert.equal(offlineNewCard.agent_status, 'offline');
+  assert.ok(offlineNewCard.offline_since);
+  assert.ok(Date.parse(offlineNewCard.offline_since) >= Date.parse(offlineNewCard.last_seen));
+
+  assert.equal(offlineOldCard.agent_status, 'offline');
+  assert.ok(offlineOldCard.offline_since);
+  assert.ok(Date.parse(offlineOldCard.offline_since) >= Date.parse(offlineOldCard.last_seen));
+  assert.ok(Date.parse(offlineNewCard.offline_since) > Date.parse(offlineOldCard.offline_since));
+  assert.deepEqual(offlineOldCard.counts, {
+    in_progress: 0,
+    awaiting_verification: 1,
+    verified: 0,
+  });
+
+  const detailResp = await fetch(`${baseUrl}/api/dashboard/machine/m-offline-old`);
   assert.equal(detailResp.status, 200, logs);
   const detail = await detailResp.json();
   assert.equal(detail.agent_status, 'offline');
   assert.ok(detail.offline_since);
   assert.ok(detail.online_since);
+  assert.deepEqual(detail.counts, {
+    in_progress: 0,
+    awaiting_verification: 1,
+    verified: 0,
+  });
+  assert.equal(detail.tasks[0]?.status, 'awaiting_verification');
+  assert.equal(detail.tasks[0]?.raw_status, 'in_progress');
 });

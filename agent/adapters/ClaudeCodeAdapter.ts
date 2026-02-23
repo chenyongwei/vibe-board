@@ -1,6 +1,6 @@
 import { Adapter } from './Adapter';
 import { AdapterInfo, Task } from '../types';
-import { fileExistsSync, runCommand } from '../utils';
+import { fileExistsSync, isAnyProcessRunning, runCommand } from '../utils';
 import { closeSync, openSync, readSync, readdirSync, statSync } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -30,6 +30,7 @@ export class ClaudeCodeAdapter implements Adapter {
   private sessionsRoot = process.env.CLAUDE_CODE_SESSIONS_DIR || path.join(os.homedir(), '.claude', 'projects');
   private activeWindowMinutes = parsePositiveInt(process.env.CLAUDE_CODE_ACTIVE_WINDOW_MINUTES, 30);
   private maxSessions = parsePositiveInt(process.env.CLAUDE_CODE_MAX_SESSIONS, 50);
+  private requireProcessRunning = String(process.env.CLAUDE_CODE_REQUIRE_RUNNING || '1') !== '0';
 
   async discover(): Promise<AdapterInfo> {
     let version: string | undefined;
@@ -45,13 +46,16 @@ export class ClaudeCodeAdapter implements Adapter {
     }
 
     const hasSessions = fileExistsSync(this.sessionsRoot) && walkJsonlFiles(this.sessionsRoot).length > 0;
+    const runtimeRunning = this.requireProcessRunning
+      ? await this.isRuntimeRunning()
+      : !!version || hasSessions;
 
     return {
       id: 'claude-code',
       name: 'Claude Code',
       version,
       path: this.path,
-      status: version || hasSessions ? 'online' : 'offline',
+      status: runtimeRunning ? 'online' : 'offline',
       adapter: 'ClaudeCodeAdapter',
       last_discovered: new Date().toISOString(),
       capabilities: ['local-session-jsonl', 'activity-monitoring']
@@ -59,6 +63,11 @@ export class ClaudeCodeAdapter implements Adapter {
   }
 
   async getTasks(): Promise<Task[]> {
+    if (this.requireProcessRunning) {
+      const runtimeActive = await this.isRuntimeRunning();
+      if (!runtimeActive) return [];
+    }
+
     const records = collectClaudeSessionRecords({
       sessionsRoot: this.sessionsRoot,
       maxSessions: this.maxSessions,
@@ -100,6 +109,11 @@ export class ClaudeCodeAdapter implements Adapter {
         // try next candidate
       }
     }
+  }
+
+  private async isRuntimeRunning(): Promise<boolean> {
+    const processTokens = ['claude-code', 'claude', path.basename(this.path || 'claude-code')];
+    return isAnyProcessRunning(processTokens);
   }
 }
 

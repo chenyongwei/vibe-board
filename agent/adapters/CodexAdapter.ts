@@ -1,6 +1,6 @@
 import { Adapter } from './Adapter';
 import { AdapterInfo, Task } from '../types';
-import { fileExistsSync, runCommand } from '../utils';
+import { fileExistsSync, isAnyProcessRunning, runCommand } from '../utils';
 import { readFileSync, readdirSync, statSync } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -36,6 +36,7 @@ export class CodexAdapter implements Adapter {
     process.env.CODEX_ARCHIVED_SESSIONS_DIR || path.join(this.codexHome, 'archived_sessions');
   private activeWindowMinutes = parsePositiveInt(process.env.CODEX_ACTIVE_WINDOW_MINUTES, 30);
   private maxTasks = parsePositiveInt(process.env.CODEX_MAX_SESSIONS, 50);
+  private requireProcessRunning = String(process.env.CODEX_REQUIRE_RUNNING || '1') !== '0';
 
   async discover(): Promise<AdapterInfo> {
     let online = false;
@@ -53,6 +54,9 @@ export class CodexAdapter implements Adapter {
     } catch {
       online = fileExistsSync(this.sessionsRoot);
     }
+    if (this.requireProcessRunning) {
+      online = await this.isRuntimeRunning();
+    }
     return {
       id: 'codex',
       name: 'Codex Code',
@@ -66,6 +70,11 @@ export class CodexAdapter implements Adapter {
   }
 
   async getTasks(): Promise<Task[]> {
+    if (this.requireProcessRunning) {
+      const runtimeActive = await this.isRuntimeRunning();
+      if (!runtimeActive) return [];
+    }
+
     const rows = collectCodexSessionRecords({
       sessionsRoot: this.sessionsRoot,
       archivedSessionsRoot: this.archivedSessionsRoot,
@@ -94,6 +103,11 @@ export class CodexAdapter implements Adapter {
         preview_images: previewImages,
       }
     };
+  }
+
+  private async isRuntimeRunning(): Promise<boolean> {
+    const processTokens = ['codex', path.basename(this.path || 'codex')];
+    return isAnyProcessRunning(processTokens);
   }
 }
 
