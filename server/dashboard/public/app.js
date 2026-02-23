@@ -11,12 +11,17 @@ let selectedView = null;
 const MAX_TASK_PREVIEW_IMAGES = 3;
 const POLL_INTERVAL_MS = 15000;
 const CARD_ALERT_DURATION_MS = 60 * 1000;
+const ALERT_SOUND_COOLDOWN_MS = 2000;
+const ALERT_SOUND_FILE_URL = '/assets/sounds/alert-soft.mp3';
+const ALERT_SOUND_VOLUME = 0.62;
+const ALERT_SOUND_PLAYBACK_RATE = 0.9;
 let dashboardEventStream = null;
 let liveRefreshTimer = null;
 let pollIntervalId = null;
 let loadInFlight = null;
 let lastAlertSoundAt = 0;
 let alertAudioContext = null;
+let alertAudioElement = null;
 let hasUnlockedAudio = false;
 let previousMachineCounts = new Map();
 const machineAlertUntil = new Map();
@@ -170,6 +175,31 @@ function cleanupExpiredMachineAlerts(nowMs = Date.now()) {
 
 function unlockAlertAudio() {
   if (hasUnlockedAudio) return;
+
+  const fileAudio = ensureAlertAudioElement();
+  if (fileAudio) {
+    try {
+      const previousVolume = fileAudio.volume;
+      fileAudio.volume = 0;
+      const primeResult = fileAudio.play();
+      if (primeResult && typeof primeResult.then === 'function') {
+        primeResult
+          .then(() => {
+            fileAudio.pause();
+            fileAudio.currentTime = 0;
+            fileAudio.volume = previousVolume;
+          })
+          .catch(() => {
+            fileAudio.volume = previousVolume;
+          });
+      } else {
+        fileAudio.pause();
+        fileAudio.currentTime = 0;
+        fileAudio.volume = previousVolume;
+      }
+    } catch {}
+  }
+
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextCtor) {
     hasUnlockedAudio = true;
@@ -190,11 +220,21 @@ function unlockAlertAudio() {
   hasUnlockedAudio = true;
 }
 
-function playCardAlertSound() {
-  const nowMs = Date.now();
-  if (nowMs - lastAlertSoundAt < 1000) return;
-  lastAlertSoundAt = nowMs;
+function ensureAlertAudioElement() {
+  if (alertAudioElement) return alertAudioElement;
+  try {
+    const audio = new Audio(ALERT_SOUND_FILE_URL);
+    audio.preload = 'auto';
+    audio.volume = ALERT_SOUND_VOLUME;
+    audio.playbackRate = ALERT_SOUND_PLAYBACK_RATE;
+    alertAudioElement = audio;
+    return audio;
+  } catch {
+    return null;
+  }
+}
 
+function playCardAlertSoundWithSynth() {
   try {
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextCtor) return;
@@ -208,8 +248,11 @@ function playCardAlertSound() {
 
     const start = context.currentTime + 0.02;
     const notes = [
-      { freq: 880, offset: 0, duration: 0.13 },
-      { freq: 988, offset: 0.18, duration: 0.15 },
+      { freq: 740, offset: 0.0, duration: 0.28 },
+      { freq: 880, offset: 0.42, duration: 0.28 },
+      { freq: 988, offset: 0.84, duration: 0.28 },
+      { freq: 880, offset: 1.26, duration: 0.32 },
+      { freq: 740, offset: 1.64, duration: 0.3 },
     ];
 
     for (const note of notes) {
@@ -226,6 +269,28 @@ function playCardAlertSound() {
       oscillator.stop(start + note.offset + note.duration + 0.03);
     }
   } catch {}
+}
+
+function playCardAlertSound() {
+  const nowMs = Date.now();
+  if (nowMs - lastAlertSoundAt < ALERT_SOUND_COOLDOWN_MS) return;
+  lastAlertSoundAt = nowMs;
+
+  const fileAudio = ensureAlertAudioElement();
+  if (fileAudio) {
+    try {
+      fileAudio.currentTime = 0;
+      const playResult = fileAudio.play();
+      if (playResult && typeof playResult.catch === 'function') {
+        playResult.catch(() => {
+          playCardAlertSoundWithSynth();
+        });
+      }
+      return;
+    } catch {}
+  }
+
+  playCardAlertSoundWithSynth();
 }
 
 function handlePromotedMachines(promotedMachineIds) {
@@ -341,6 +406,13 @@ function teardownLiveUpdates() {
   previousMachineCounts = new Map();
   lastAlertSoundAt = 0;
   hasUnlockedAudio = false;
+  if (alertAudioElement) {
+    try {
+      alertAudioElement.pause();
+      alertAudioElement.currentTime = 0;
+    } catch {}
+    alertAudioElement = null;
+  }
   if (alertAudioContext) {
     try {
       const closeResult = alertAudioContext.close();
@@ -379,24 +451,54 @@ function isSelected(machineId, status) {
   return !!selectedView && selectedView.machineId === machineId && selectedView.status === status;
 }
 
+function compareTimestampDesc(aValue, bValue) {
+  const aMs = Date.parse(aValue || '');
+  const bMs = Date.parse(bValue || '');
+  const aValid = !Number.isNaN(aMs);
+  const bValid = !Number.isNaN(bMs);
+
+  if (aValid && bValid && aMs !== bMs) {
+    return bMs - aMs;
+  }
+  if (aValid !== bValid) {
+    return aValid ? -1 : 1;
+  }
+  return 0;
+}
+
 function sortMachines(machines) {
   return [...(machines || [])].sort((a, b) => {
-    const rank = (item) => (getAgentStatus(item) === 'online' ? 0 : 1);
-    const rankDiff = rank(a) - rank(b);
-    if (rankDiff !== 0) return rankDiff;
-
-    const aSince = Date.parse(getStatusSince(a) || '');
-    const bSince = Date.parse(getStatusSince(b) || '');
-    if (!Number.isNaN(aSince) && !Number.isNaN(bSince) && aSince !== bSince) {
-      return bSince - aSince;
+    const aOffline = getAgentStatus(a) === 'offline';
+    const bOffline = getAgentStatus(b) === 'offline';
+    if (aOffline !== bOffline) {
+      return aOffline ? 1 : -1;
     }
 
-    const aSeen = Date.parse(a?.last_seen || '');
-    const bSeen = Date.parse(b?.last_seen || '');
-    if (!Number.isNaN(aSeen) && !Number.isNaN(bSeen) && aSeen !== bSeen) {
-      return bSeen - aSeen;
+    if (!aOffline) {
+      const aInProgress = toSafeCount(a?.counts?.in_progress);
+      const bInProgress = toSafeCount(b?.counts?.in_progress);
+      if (aInProgress !== bInProgress) {
+        return bInProgress - aInProgress;
+      }
+
+      const statusSinceDiff = compareTimestampDesc(getStatusSince(a), getStatusSince(b));
+      if (statusSinceDiff !== 0) {
+        return statusSinceDiff;
+      }
+    } else {
+      const offlineSinceDiff = compareTimestampDesc(
+        a?.offline_since || a?.last_seen || '',
+        b?.offline_since || b?.last_seen || ''
+      );
+      if (offlineSinceDiff !== 0) {
+        return offlineSinceDiff;
+      }
     }
 
+    const lastSeenDiff = compareTimestampDesc(a?.last_seen || '', b?.last_seen || '');
+    if (lastSeenDiff !== 0) {
+      return lastSeenDiff;
+    }
     return String(getMachineDisplayTitle(a)).localeCompare(String(getMachineDisplayTitle(b)), 'zh-CN');
   });
 }
