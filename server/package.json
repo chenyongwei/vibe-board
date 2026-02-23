@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "seed": "node seed.js",
+    "cleanup:offline": "node scripts/cleanup-offline-cards.js",
     "test": "node --test tests/*.test.js",
     "dev:api": "nodemon --watch . --ext js,json --ignore dashboard/public --ignore data --ignore node_modules --signal SIGTERM index.js",
     "dev:ui": "browser-sync start --proxy http://localhost:${PORT:-6101} --port ${UI_PORT:-6102} --files \"dashboard/public/**/*\" --no-open --no-notify",

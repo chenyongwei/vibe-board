@@ -58,6 +58,7 @@
 - `start-dev.sh`：开发模式一键启动（docker dev + 本地 agent dev）
 - `start-prod.sh`：产线模式一键启动（docker build + agent release build）
 - `reset-mysql.sh`：重置 MySQL 数据库
+- `cleanup-offline-cards.sh`：清理灰色（离线）卡片的数据
 - `agent/agent.config.example.json`：Agent 配置模板（含参数说明）
 
 ## 使用说明
@@ -149,6 +150,25 @@ docker compose -f docker-compose.yml down
 MYSQL_DATABASE=vibe_board MYSQL_ROOT_PASSWORD=vibe_root ./reset-mysql.sh
 ```
 
+## 清理灰色（离线）卡片数据
+> 警告：该操作会删除离线卡片及关联任务/历史记录。
+
+执行：
+
+```bash
+./cleanup-offline-cards.sh
+```
+
+常用参数：
+
+```bash
+# 仅预览将删除哪些数据
+./cleanup-offline-cards.sh --dry-run
+
+# 自定义离线判定阈值（秒）
+./cleanup-offline-cards.sh --offline-seconds 300
+```
+
 ## Agent 配置说明
 推荐基于模板：
 
@@ -178,6 +198,9 @@ cp agent/agent.config.example.json agent/agent.config.json
 
 # 重置数据库
 ./reset-mysql.sh
+
+# 清理灰色（离线）卡片数据
+./cleanup-offline-cards.sh
 
 # 仅手动启动开发 docker 栈
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d

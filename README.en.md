@@ -58,6 +58,7 @@ A unified external entry is exposed through `gateway` on port `61100`:
 - `start-dev.sh`: one-command development startup (docker dev + local agent dev)
 - `start-prod.sh`: one-command production startup (docker build + agent release build)
 - `reset-mysql.sh`: reset MySQL database
+- `cleanup-offline-cards.sh`: clean data for gray (offline) cards
 - `agent/agent.config.example.json`: agent config template (with parameter descriptions)
 
 ## Usage
@@ -149,6 +150,25 @@ Override database name/password via env vars:
 MYSQL_DATABASE=vibe_board MYSQL_ROOT_PASSWORD=vibe_root ./reset-mysql.sh
 ```
 
+## Clean Gray (Offline) Card Data
+> Warning: this deletes offline cards and their related tasks/history records.
+
+Run:
+
+```bash
+./cleanup-offline-cards.sh
+```
+
+Common options:
+
+```bash
+# Preview what would be deleted
+./cleanup-offline-cards.sh --dry-run
+
+# Override offline threshold (seconds)
+./cleanup-offline-cards.sh --offline-seconds 300
+```
+
 ## Agent Configuration
 Recommended setup from template:
 
@@ -178,6 +198,9 @@ Config priority:
 
 # Reset database
 ./reset-mysql.sh
+
+# Clean gray (offline) card data
+./cleanup-offline-cards.sh
 
 # Manually start dev docker stack only
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
