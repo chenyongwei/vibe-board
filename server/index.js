@@ -665,6 +665,11 @@ app.post('/api/report', asyncRoute(async (req, res) => {
     const sourceToken = normalizeSourceToken(groupSource);
     const sourceMachineId = sourceToken ? `${machineId}::${sourceToken}` : machineId;
     const sourceMachineName = composeMachineAgentName(machineName, groupSource);
+    const incomingTaskIds = new Set(
+      (group.tasks || [])
+        .filter((item) => item && item.id)
+        .map((item) => String(item.id))
+    );
 
     // Upsert machine card scoped by source.
     let machine = findMachine(db, sourceMachineId, machineFingerprint, sourceMachineName, sourceToken);
@@ -752,6 +757,28 @@ app.post('/api/report', asyncRoute(async (req, res) => {
         });
       }
     });
+
+    // Snapshot semantics: remove tasks that are no longer reported in this source card.
+    const removedTasks = (db.tasks || []).filter(
+      (task) => task.machine_id === canonicalMachineId && !incomingTaskIds.has(String(task.id))
+    );
+    if (removedTasks.length > 0) {
+      db.tasks = (db.tasks || []).filter(
+        (task) => !(task.machine_id === canonicalMachineId && !incomingTaskIds.has(String(task.id)))
+      );
+      for (const removed of removedTasks) {
+        appendHistory(db, {
+          id: `${canonicalMachineId}:${removed.id}:${Date.now()}`,
+          event: 'removed',
+          machine_id: canonicalMachineId,
+          task_id: removed.id,
+          title: removed.title || 'Untitled Task',
+          from_status: normalizeTaskStatus(removed.status),
+          to_status: null,
+          changed_at: now,
+        });
+      }
+    }
   }
 
   await saveDB(db);

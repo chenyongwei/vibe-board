@@ -2,7 +2,8 @@ body { font-family: Arial, sans-serif; background: #f5f7fb; color: #333; margin:
 .header { padding: 16px 20px; background: linear-gradient(135deg, #4b6cb7 0%, #182848 100%); color: white; }
 .header h1 { margin: 0; font-size: 1.6rem; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; padding: 16px; }
-.card { background: white; border: 1px solid transparent; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); padding: 12px; }
+.card { background: white; border: 1px solid transparent; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); padding: 12px; transition: border-color 280ms ease, box-shadow 280ms ease, background-color 280ms ease; }
+.card-reordered { border-color: #89b2ff; box-shadow: 0 12px 28px rgba(47, 79, 147, 0.24); }
 @keyframes card-alert-pulse {
   0% {
     border-color: #f59e0b;
@@ -24,6 +25,13 @@ body { font-family: Arial, sans-serif; background: #f5f7fb; color: #333; margin:
   animation: card-alert-pulse 1s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
+  .card-reordered {
+    border-color: #a5b4cc;
+    box-shadow: 0 0 0 2px rgba(165, 180, 204, 0.35);
+  }
   .card-alerting {
     animation: none;
     border-color: #f59e0b;

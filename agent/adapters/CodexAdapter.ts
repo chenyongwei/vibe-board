@@ -10,6 +10,8 @@ interface CodexSessionRecord {
   cwd?: string;
   startedAt: string;
   lastActivityAt: string;
+  taskStartedAt?: string;
+  taskCompletedAt?: string;
   title: string;
   previewImages: string[];
   archived: boolean;
@@ -21,6 +23,12 @@ interface CollectOptions {
   archivedSessionsRoot: string;
   maxTasks: number;
   threadTitles?: Record<string, string>;
+  activeWorkspaceRoots?: string[];
+}
+
+interface CodexGlobalStateInfo {
+  threadTitles: Record<string, string>;
+  activeWorkspaceRoots: string[];
 }
 
 const MAX_PREVIEW_IMAGES = 3;
@@ -75,11 +83,13 @@ export class CodexAdapter implements Adapter {
       if (!runtimeActive) return [];
     }
 
+    const globalState = loadCodexGlobalState(this.codexHome);
     const rows = collectCodexSessionRecords({
       sessionsRoot: this.sessionsRoot,
       archivedSessionsRoot: this.archivedSessionsRoot,
       maxTasks: this.maxTasks,
-      threadTitles: loadThreadTitles(this.codexHome),
+      threadTitles: globalState.threadTitles,
+      activeWorkspaceRoots: globalState.activeWorkspaceRoots,
     });
     return rows.map((r) => this.normalizeTask(r));
   }
@@ -100,6 +110,8 @@ export class CodexAdapter implements Adapter {
         cwd: raw.cwd,
         archived: !!raw.archived,
         source_file: raw.sourceFile,
+        task_started_at: raw.taskStartedAt || undefined,
+        task_completed_at: raw.taskCompletedAt || undefined,
         preview_images: previewImages,
       }
     };
@@ -125,6 +137,14 @@ function mapStatus(s: string): string {
 
 function inferStatus(raw: any, activeWindowMinutes: number): string {
   if (raw?.archived) return 'verified';
+  const startedAt = Date.parse(raw?.taskStartedAt || raw?.task_started_at || '');
+  const completedAt = Date.parse(raw?.taskCompletedAt || raw?.task_completed_at || '');
+  if (!Number.isNaN(startedAt) && (Number.isNaN(completedAt) || startedAt > completedAt)) {
+    return 'in_progress';
+  }
+  if (!Number.isNaN(completedAt)) {
+    return 'awaiting_verification';
+  }
   const updated = Date.parse(raw?.lastActivityAt || raw?.updated_at || '');
   if (!Number.isNaN(updated)) {
     const diffMs = Date.now() - updated;
@@ -148,9 +168,13 @@ export function collectCodexSessionRecords(options: CollectOptions): CodexSessio
   const parsed = sessionFiles
     .map((filePath) => parseSessionFile(filePath, options.archivedSessionsRoot, threadTitles))
     .filter((row): row is CodexSessionRecord => !!row);
+  const activeWorkspaceRoots = normalizeWorkspaceRoots(options.activeWorkspaceRoots);
+  const scoped = activeWorkspaceRoots.length > 0
+    ? parsed.filter((row) => isSessionInWorkspace(row, activeWorkspaceRoots))
+    : parsed;
 
-  parsed.sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt));
-  const deduped = dedupeById(parsed);
+  scoped.sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt));
+  const deduped = dedupeById(scoped);
   return deduped.slice(0, options.maxTasks);
 }
 
@@ -189,6 +213,8 @@ function parseSessionFile(
   let cwd = '';
   let startedAt = '';
   let lastActivityAt = '';
+  let taskStartedAt = '';
+  let taskCompletedAt = '';
   const userPrompts: Array<{ title: string; images: string[] }> = [];
   let lastPromptImages: string[] = [];
 
@@ -207,6 +233,15 @@ function parseSessionFile(
       id = entry.payload?.id || id;
       cwd = entry.payload?.cwd || cwd;
       startedAt = entry.payload?.timestamp || startedAt;
+    }
+    if (entry.type === 'event_msg') {
+      const eventType = String(entry.payload?.type || '').trim();
+      if (eventType === 'task_started' && entry.timestamp) {
+        taskStartedAt = entry.timestamp;
+      }
+      if (eventType === 'task_complete' && entry.timestamp) {
+        taskCompletedAt = entry.timestamp;
+      }
     }
     if (entry.type === 'response_item' && entry.payload?.type === 'message' && entry.payload?.role === 'user') {
       const extracted = extractUserMessage(entry.payload?.content);
@@ -244,6 +279,8 @@ function parseSessionFile(
     cwd: cwd || undefined,
     startedAt: started,
     lastActivityAt: updated,
+    taskStartedAt: taskStartedAt || undefined,
+    taskCompletedAt: taskCompletedAt || undefined,
     title,
     previewImages,
     archived,
@@ -371,29 +408,56 @@ function normalizePersistedTitle(input: unknown): string {
   return text.slice(0, 120);
 }
 
-function loadThreadTitles(codexHome: string): Record<string, string> {
+function normalizeWorkspaceRoots(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of input) {
+    const raw = String(item || '').trim();
+    if (!raw) continue;
+    const normalized = path.resolve(raw).replace(/[\\/]+$/, '').toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function isSessionInWorkspace(record: CodexSessionRecord, roots: string[]): boolean {
+  if (!roots.length) return true;
+  const cwd = String(record?.cwd || '').trim();
+  if (!cwd) return false;
+  const normalizedCwd = path.resolve(cwd).replace(/[\\/]+$/, '').toLowerCase();
+  if (!normalizedCwd) return false;
+  return roots.some((root) => normalizedCwd === root || normalizedCwd.startsWith(`${root}${path.sep}`));
+}
+
+function loadCodexGlobalState(codexHome: string): CodexGlobalStateInfo {
   const statePath = path.join(codexHome, '.codex-global-state.json');
   let text = '';
   try {
     text = readFileSync(statePath, 'utf8');
   } catch {
-    return {};
+    return { threadTitles: {}, activeWorkspaceRoots: [] };
   }
 
   let parsed: any;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return {};
+    return { threadTitles: {}, activeWorkspaceRoots: [] };
   }
 
   const rawTitles = parsed?.['thread-titles']?.titles;
-  if (!rawTitles || typeof rawTitles !== 'object') return {};
-
   const titles: Record<string, string> = {};
-  for (const [key, value] of Object.entries(rawTitles)) {
-    const normalized = normalizePersistedTitle(value);
-    if (normalized) titles[key] = normalized;
+  if (rawTitles && typeof rawTitles === 'object') {
+    for (const [key, value] of Object.entries(rawTitles)) {
+      const normalized = normalizePersistedTitle(value);
+      if (normalized) titles[key] = normalized;
+    }
   }
-  return titles;
+  return {
+    threadTitles: titles,
+    activeWorkspaceRoots: normalizeWorkspaceRoots(parsed?.['active-workspace-roots']),
+  };
 }

@@ -9,16 +9,22 @@ let currentMachines = [];
 let machineIndex = new Map();
 let selectedView = null;
 const MAX_TASK_PREVIEW_IMAGES = 3;
-const POLL_INTERVAL_MS = 15000;
+const POLL_INTERVAL_MS = 5000;
 const CARD_ALERT_DURATION_MS = 60 * 1000;
+const CARD_REORDER_ANIMATION_MS = 380;
 const ALERT_SOUND_COOLDOWN_MS = 2000;
 const ALERT_SOUND_FILE_URL = '/assets/sounds/alert-soft.mp3';
 const ALERT_SOUND_VOLUME = 0.62;
 const ALERT_SOUND_PLAYBACK_RATE = 0.9;
+const STREAM_RECONNECT_BASE_DELAY_MS = 1200;
+const STREAM_RECONNECT_MAX_DELAY_MS = 15000;
 let dashboardEventStream = null;
+let dashboardStreamReconnectTimer = null;
+let dashboardStreamReconnectAttempts = 0;
 let liveRefreshTimer = null;
 let pollIntervalId = null;
 let loadInFlight = null;
+let detailsRequestToken = 0;
 let lastAlertSoundAt = 0;
 let alertAudioContext = null;
 let alertAudioElement = null;
@@ -366,14 +372,35 @@ function scheduleLiveRefresh(delayMs = 80) {
   }, delayMs);
 }
 
+function scheduleDashboardStreamReconnect() {
+  if (dashboardStreamReconnectTimer) return;
+  const nextDelay = Math.min(
+    STREAM_RECONNECT_BASE_DELAY_MS * (2 ** dashboardStreamReconnectAttempts),
+    STREAM_RECONNECT_MAX_DELAY_MS
+  );
+  dashboardStreamReconnectAttempts += 1;
+  dashboardStreamReconnectTimer = window.setTimeout(() => {
+    dashboardStreamReconnectTimer = null;
+    connectDashboardStream();
+  }, nextDelay);
+}
+
 function connectDashboardStream() {
   if (typeof window.EventSource !== 'function') return;
   if (dashboardEventStream) {
     dashboardEventStream.close();
+    dashboardEventStream = null;
+  }
+  if (dashboardStreamReconnectTimer) {
+    window.clearTimeout(dashboardStreamReconnectTimer);
+    dashboardStreamReconnectTimer = null;
   }
 
   const stream = new EventSource('/api/dashboard/stream');
   dashboardEventStream = stream;
+  stream.onopen = () => {
+    dashboardStreamReconnectAttempts = 0;
+  };
   stream.addEventListener('connected', () => {
     scheduleLiveRefresh(0);
   });
@@ -383,6 +410,14 @@ function connectDashboardStream() {
   stream.onmessage = () => {
     scheduleLiveRefresh(80);
   };
+  stream.onerror = () => {
+    if (stream.readyState === EventSource.CLOSED) {
+      if (dashboardEventStream === stream) {
+        dashboardEventStream = null;
+      }
+      scheduleDashboardStreamReconnect();
+    }
+  };
 }
 
 function teardownLiveUpdates() {
@@ -390,6 +425,11 @@ function teardownLiveUpdates() {
     dashboardEventStream.close();
     dashboardEventStream = null;
   }
+  if (dashboardStreamReconnectTimer) {
+    window.clearTimeout(dashboardStreamReconnectTimer);
+    dashboardStreamReconnectTimer = null;
+  }
+  dashboardStreamReconnectAttempts = 0;
   if (liveRefreshTimer) {
     window.clearTimeout(liveRefreshTimer);
     liveRefreshTimer = null;
@@ -464,6 +504,70 @@ function compareTimestampDesc(aValue, bValue) {
     return aValid ? -1 : 1;
   }
   return 0;
+}
+
+function hasMachineOrderChanged(previousMachines, nextMachines) {
+  const prevIds = (previousMachines || []).map((item) => String(item?.id || ''));
+  const nextIds = (nextMachines || []).map((item) => String(item?.id || ''));
+  if (prevIds.length !== nextIds.length) {
+    return prevIds.length > 0 && nextIds.length > 0;
+  }
+  for (let i = 0; i < prevIds.length; i += 1) {
+    if (prevIds[i] !== nextIds[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function captureCardRects(root) {
+  const out = new Map();
+  const cards = root.querySelectorAll('.card[data-machine-id]');
+  for (const card of cards) {
+    if (!(card instanceof HTMLElement)) continue;
+    const machineId = String(card.dataset.machineId || '').trim();
+    if (!machineId) continue;
+    out.set(machineId, card.getBoundingClientRect());
+  }
+  return out;
+}
+
+function animateCardReorder(root, previousRects, enabled) {
+  if (!enabled) return;
+  if (!previousRects || previousRects.size === 0) return;
+
+  const supportsMatchMedia = typeof window.matchMedia === 'function';
+  const reduceMotion = supportsMatchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const cards = root.querySelectorAll('.card[data-machine-id]');
+  for (const card of cards) {
+    if (!(card instanceof HTMLElement)) continue;
+    const machineId = String(card.dataset.machineId || '').trim();
+    if (!machineId) continue;
+    const previous = previousRects.get(machineId);
+    if (!previous) continue;
+
+    const next = card.getBoundingClientRect();
+    const dx = previous.left - next.left;
+    const dy = previous.top - next.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+
+    card.classList.add('card-reordered');
+    if (!reduceMotion) {
+      card.style.transition = 'none';
+      card.style.transform = `translate(${dx}px, ${dy}px)`;
+      card.style.willChange = 'transform';
+      card.getBoundingClientRect();
+      card.style.transition = `transform ${CARD_REORDER_ANIMATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+      card.style.transform = 'translate(0, 0)';
+    }
+
+    window.setTimeout(() => {
+      card.style.transform = '';
+      card.style.transition = '';
+      card.style.willChange = '';
+      card.classList.remove('card-reordered');
+    }, CARD_REORDER_ANIMATION_MS + 90);
+  }
 }
 
 function sortMachines(machines) {
@@ -579,8 +683,11 @@ function closeImageViewer() {
   document.body.classList.remove('viewer-open');
 }
 
-function renderDashboard(machines) {
+function renderDashboard(machines, options = {}) {
+  const animateReorder = !!options.animateReorder;
   const root = document.getElementById('dashboard');
+  if (!root) return;
+  const previousRects = captureCardRects(root);
   cleanupExpiredMachineAlerts();
   root.innerHTML = '';
   machineIndex = new Map((machines || []).map((m) => [m.id, m]));
@@ -592,6 +699,7 @@ function renderDashboard(machines) {
 
   machines.forEach((m) => {
     const card = document.createElement('div');
+    card.dataset.machineId = m.id;
     const status = getAgentStatus(m);
     const alertClass = isMachineAlerting(m.id) ? ' card-alerting' : '';
     card.className = `card ${status === 'offline' ? 'card-offline' : 'card-online'}${alertClass}`;
@@ -636,6 +744,7 @@ function renderDashboard(machines) {
 
     root.appendChild(card);
   });
+  animateCardReorder(root, previousRects, animateReorder);
 }
 
 function renderDetailsHint() {
@@ -700,6 +809,7 @@ function renderTaskDetails(machineName, status, tasks) {
 }
 
 async function renderSelectedDetails() {
+  const requestToken = ++detailsRequestToken;
   if (!selectedView) {
     renderDetailsHint();
     return;
@@ -713,6 +823,9 @@ async function renderSelectedDetails() {
   }
 
   const details = await fetchMachineDetails(machine.id);
+  if (requestToken !== detailsRequestToken) {
+    return;
+  }
   if (!details) {
     renderDetailsError('加载任务明细失败，请稍后重试。');
     return;
@@ -737,14 +850,19 @@ async function loadAndRender() {
     const sortedMachines = sortMachines(data.machines || []);
     const promotedMachineIds = findPromotedMachines(sortedMachines);
     handlePromotedMachines(promotedMachineIds);
+    const previousMachines = currentMachines;
     currentMachines = sortedMachines;
-    renderDashboard(currentMachines);
+    renderDashboard(currentMachines, {
+      animateReorder: hasMachineOrderChanged(previousMachines, currentMachines),
+    });
 
     if (!selectedView) {
       renderDetailsHint();
       return;
     }
-    await renderSelectedDetails();
+    renderSelectedDetails().catch(() => {
+      renderDetailsError('加载任务明细失败，请稍后重试。');
+    });
   })();
   try {
     await loadInFlight;
@@ -759,7 +877,7 @@ async function handleStatusClick(target) {
   if (!machineId || !status) return;
 
   selectedView = { machineId, status };
-  renderDashboard(currentMachines);
+  renderDashboard(currentMachines, { animateReorder: false });
   await renderSelectedDetails();
 }
 
@@ -831,6 +949,11 @@ function bootstrap() {
   renderDetailsHint();
   loadAndRender();
   connectDashboardStream();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      scheduleLiveRefresh(0);
+    }
+  });
   pollIntervalId = window.setInterval(loadAndRender, POLL_INTERVAL_MS);
   window.addEventListener('beforeunload', teardownLiveUpdates);
 }

@@ -373,12 +373,13 @@ test('same machine fingerprint keeps a single machine record across machine_id c
   const dashboard = await dashboardResp.json();
   assert.equal(dashboard.machines.length, 1);
   assert.equal(dashboard.machines[0].id, 'mac-boot-1');
-  assert.equal(dashboard.machines[0].total_tasks, 2);
+  assert.equal(dashboard.machines[0].total_tasks, 1);
 
   const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
   assert.equal(db.machines.length, 1);
-  assert.equal(db.tasks.length, 2);
-  assert.equal(db.tasks.filter((task) => task.machine_id === 'mac-boot-1').length, 2);
+  assert.equal(db.tasks.length, 1);
+  assert.equal(db.tasks.filter((task) => task.machine_id === 'mac-boot-1').length, 1);
+  assert.equal(db.tasks[0]?.id, 'b');
 });
 
 test('task created_at and updated_at should preserve reported task timestamps', async (t) => {

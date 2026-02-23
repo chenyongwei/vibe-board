@@ -148,6 +148,105 @@ test('CodexAdapter reads local sessions and maps vibe statuses', async () => {
   }
 });
 
+test('CodexAdapter infers running and awaiting status from task lifecycle events', async () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'vibe-codex-adapter-task-events-'));
+  const sessionsRoot = path.join(tmp, 'sessions');
+  const archivedRoot = path.join(tmp, 'archived_sessions');
+  const runningId = '44444444-4444-4444-4444-444444444444';
+  const awaitingId = '55555555-5555-5555-5555-555555555555';
+
+  const runningFile = path.join(
+    sessionsRoot,
+    '2026/02/22/rollout-2026-02-22T10-00-00-44444444-4444-4444-4444-444444444444.jsonl'
+  );
+  const awaitingFile = path.join(
+    sessionsRoot,
+    '2026/02/22/rollout-2026-02-22T11-00-00-55555555-5555-5555-5555-555555555555.jsonl'
+  );
+
+  mkdirSync(path.dirname(runningFile), { recursive: true });
+  mkdirSync(path.dirname(awaitingFile), { recursive: true });
+
+  writeFileSync(
+    runningFile,
+    [
+      JSON.stringify({
+        timestamp: '2026-02-22T10:00:00.000Z',
+        type: 'session_meta',
+        payload: { id: runningId, timestamp: '2026-02-22T10:00:00.000Z', cwd: '/Users/alex/Code/vibe-board' },
+      }),
+      JSON.stringify({ timestamp: '2026-02-22T10:05:00.000Z', type: 'event_msg', payload: { type: 'task_complete' } }),
+      JSON.stringify({ timestamp: '2026-02-22T10:10:00.000Z', type: 'event_msg', payload: { type: 'task_started' } }),
+      JSON.stringify({
+        timestamp: '2026-02-22T10:11:00.000Z',
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'output_text', text: '继续处理这个任务' }],
+        },
+      }),
+      JSON.stringify({ timestamp: '2026-02-22T10:11:01.000Z', type: 'event_msg', payload: { type: 'token_count' } }),
+    ].join('\n') + '\n',
+    'utf8'
+  );
+
+  writeFileSync(
+    awaitingFile,
+    [
+      JSON.stringify({
+        timestamp: '2026-02-22T11:00:00.000Z',
+        type: 'session_meta',
+        payload: { id: awaitingId, timestamp: '2026-02-22T11:00:00.000Z', cwd: '/Users/alex/Code/vibe-board' },
+      }),
+      JSON.stringify({ timestamp: '2026-02-22T11:01:00.000Z', type: 'event_msg', payload: { type: 'task_started' } }),
+      JSON.stringify({ timestamp: '2026-02-22T11:02:00.000Z', type: 'event_msg', payload: { type: 'task_complete' } }),
+      JSON.stringify({
+        timestamp: '2026-02-22T11:02:10.000Z',
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'done' }],
+        },
+      }),
+    ].join('\n') + '\n',
+    'utf8'
+  );
+
+  const restore = {
+    CODEX_HOME: process.env.CODEX_HOME,
+    CODEX_SESSIONS_DIR: process.env.CODEX_SESSIONS_DIR,
+    CODEX_ARCHIVED_SESSIONS_DIR: process.env.CODEX_ARCHIVED_SESSIONS_DIR,
+    CODEX_ACTIVE_WINDOW_MINUTES: process.env.CODEX_ACTIVE_WINDOW_MINUTES,
+    CODEX_MAX_SESSIONS: process.env.CODEX_MAX_SESSIONS,
+    CODEX_REQUIRE_RUNNING: process.env.CODEX_REQUIRE_RUNNING,
+  };
+
+  process.env.CODEX_HOME = tmp;
+  process.env.CODEX_SESSIONS_DIR = sessionsRoot;
+  process.env.CODEX_ARCHIVED_SESSIONS_DIR = archivedRoot;
+  process.env.CODEX_ACTIVE_WINDOW_MINUTES = '1';
+  process.env.CODEX_MAX_SESSIONS = '10';
+  process.env.CODEX_REQUIRE_RUNNING = '0';
+
+  try {
+    const adapter = new CodexAdapter();
+    const tasks = await adapter.getTasks();
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    assert.equal(byId.get(`codex-session-${runningId}`)?.status, 'in_progress');
+    assert.equal(byId.get(`codex-session-${awaitingId}`)?.status, 'awaiting_verification');
+  } finally {
+    process.env.CODEX_HOME = restore.CODEX_HOME;
+    process.env.CODEX_SESSIONS_DIR = restore.CODEX_SESSIONS_DIR;
+    process.env.CODEX_ARCHIVED_SESSIONS_DIR = restore.CODEX_ARCHIVED_SESSIONS_DIR;
+    process.env.CODEX_ACTIVE_WINDOW_MINUTES = restore.CODEX_ACTIVE_WINDOW_MINUTES;
+    process.env.CODEX_MAX_SESSIONS = restore.CODEX_MAX_SESSIONS;
+    process.env.CODEX_REQUIRE_RUNNING = restore.CODEX_REQUIRE_RUNNING;
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('CodexAdapter strips <image> placeholders and exposes preview images', async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'vibe-codex-adapter-images-'));
   const sessionsRoot = path.join(tmp, 'sessions');
@@ -295,6 +394,74 @@ test('CodexAdapter prefers Codex desktop thread title mapping and falls back to 
 
     assert.equal(mapped?.title, 'Explore repo then continue');
     assert.equal(fallback?.title, '第一条有效需求');
+  } finally {
+    process.env.CODEX_HOME = restore.CODEX_HOME;
+    process.env.CODEX_SESSIONS_DIR = restore.CODEX_SESSIONS_DIR;
+    process.env.CODEX_ARCHIVED_SESSIONS_DIR = restore.CODEX_ARCHIVED_SESSIONS_DIR;
+    process.env.CODEX_MAX_SESSIONS = restore.CODEX_MAX_SESSIONS;
+    process.env.CODEX_REQUIRE_RUNNING = restore.CODEX_REQUIRE_RUNNING;
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('CodexAdapter scopes sessions to active workspace roots when available', async () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'vibe-codex-workspace-filter-'));
+  const sessionsRoot = path.join(tmp, 'sessions');
+  const archivedRoot = path.join(tmp, 'archived_sessions');
+  const inRootId = '66666666-6666-6666-6666-666666666666';
+  const outRootId = '77777777-7777-7777-7777-777777777777';
+
+  writeSession({
+    filePath: path.join(
+      sessionsRoot,
+      '2026/02/22/rollout-2026-02-22T09-00-00-66666666-6666-6666-6666-666666666666.jsonl'
+    ),
+    id: inRootId,
+    cwd: '/Users/alex/Code/vibe-board',
+    startedAt: '2026-02-22T09:00:00.000Z',
+    lastAt: '2026-02-22T09:05:00.000Z',
+    prompts: ['vibe board task'],
+  });
+
+  writeSession({
+    filePath: path.join(
+      sessionsRoot,
+      '2026/02/22/rollout-2026-02-22T10-00-00-77777777-7777-7777-7777-777777777777.jsonl'
+    ),
+    id: outRootId,
+    cwd: '/Users/alex/Code/nest-core',
+    startedAt: '2026-02-22T10:00:00.000Z',
+    lastAt: '2026-02-22T10:05:00.000Z',
+    prompts: ['other repo task'],
+  });
+
+  writeFileSync(
+    path.join(tmp, '.codex-global-state.json'),
+    JSON.stringify({
+      'active-workspace-roots': ['/Users/alex/Code/vibe-board'],
+    }),
+    'utf8'
+  );
+
+  const restore = {
+    CODEX_HOME: process.env.CODEX_HOME,
+    CODEX_SESSIONS_DIR: process.env.CODEX_SESSIONS_DIR,
+    CODEX_ARCHIVED_SESSIONS_DIR: process.env.CODEX_ARCHIVED_SESSIONS_DIR,
+    CODEX_MAX_SESSIONS: process.env.CODEX_MAX_SESSIONS,
+    CODEX_REQUIRE_RUNNING: process.env.CODEX_REQUIRE_RUNNING,
+  };
+
+  process.env.CODEX_HOME = tmp;
+  process.env.CODEX_SESSIONS_DIR = sessionsRoot;
+  process.env.CODEX_ARCHIVED_SESSIONS_DIR = archivedRoot;
+  process.env.CODEX_MAX_SESSIONS = '10';
+  process.env.CODEX_REQUIRE_RUNNING = '0';
+
+  try {
+    const adapter = new CodexAdapter();
+    const tasks = await adapter.getTasks();
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0]?.id, `codex-session-${inRootId}`);
   } finally {
     process.env.CODEX_HOME = restore.CODEX_HOME;
     process.env.CODEX_SESSIONS_DIR = restore.CODEX_SESSIONS_DIR;
